@@ -2,3 +2,5 @@
 .env
 train_files
 data
+__pycache__
+.chainlit
