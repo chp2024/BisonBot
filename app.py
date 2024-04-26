@@ -8,6 +8,14 @@ import chainlit as cl
 from langchain_community.chat_models import ChatOpenAI
 from langchain.schema.runnable.config import RunnableConfig
 
+from typing import Dict, Optional
+import chainlit as cl
+
+
+@cl.oauth_callback
+def oauth_callback(provider_id, token, raw_user_data, default_user):
+    return default_user   
+
 # Prompt Template
 prompt_template = """You are an helpful AI assistant and your name is BisonBot. You are kind, gentle and respectful to the user. Your job is to answer the questions related to Howard University in concise and step by step manner. 
 If you don't know the answer to a question, please don't share false information.
