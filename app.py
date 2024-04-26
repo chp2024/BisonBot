@@ -6,6 +6,7 @@ import chainlit as cl
 from langchain_openai import ChatOpenAI
 from langchain.schema.runnable.config import RunnableConfig
 from langchain_core.prompts import PromptTemplate
+import os
 
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
@@ -51,7 +52,7 @@ def load_llama2_llm():
     Returns:
     - llm: Llama2 language model instance
     """
-    model = ChatOpenAI(streaming=True, model="llama2", base_url="http://localhost:11434/v1/", temperature=0)
+    model = ChatOpenAI(streaming=True, temperature=0)
     return(model) 
 
 # Loading the local model into LLM
