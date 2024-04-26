@@ -1,16 +1,11 @@
 # Import necessary libraries
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain import PromptTemplate
-from datetime import datetime
 import chainlit as cl
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.schema.runnable.config import RunnableConfig
-
-from typing import Dict, Optional
-import chainlit as cl
-
+from langchain_core.prompts import PromptTemplate
 
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
@@ -26,8 +21,7 @@ Question: {question}
 Response for Questions asked.
 answer:
 """
-# Model path and embedding model
-# modelpath = "../models/llama-2-7b-chat.Q2_K.gguf"
+# embedding model
 embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Initialize embeddings using HuggingFace model
