@@ -1,12 +1,11 @@
 # Import necessary libraries
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 import chainlit as cl
 from langchain_openai import ChatOpenAI
 from langchain.schema.runnable.config import RunnableConfig
 from langchain_core.prompts import PromptTemplate
-import os
+from langchain_chroma import Chroma
 
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
@@ -42,37 +41,36 @@ config = {'max_new_tokens': 512, 'context_length': 4096,
 
 
 @cl.cache
-# Load Llama2 model function
-def load_llama2_llm():
+# Load ChatGPT model function
+def load_model():
     """
-    Loads a Llama2 language model from the specified model path.
-
-    Parameters:
-    - modelpath: Path to the Llama2 language model
-    Returns:
-    - llm: Llama2 language model instance
+    Loads a ChatGPT language model from the specified model path.
     """
     model = ChatOpenAI(streaming=True, temperature=0)
     return(model) 
 
 # Loading the local model into LLM
-llm = load_llama2_llm()
+llm = load_model()
     
 @cl.on_chat_start
 # Actions to be taken once the RAG app starts
 async def factory():   
     faiss_index_path = indexpath + 'temp-index'
 
-    db = FAISS.load_local(faiss_index_path, embeddings, allow_dangerous_deserialization=True)
+    vector_store = Chroma(
+    collection_name='howard_information',
+    embedding_function=embeddings,
+    persist_directory='./data/chroma'
+    )
     
     prompt = PromptTemplate(template=prompt_template,
                        input_variables=['context', 'question'])
     
-    # Create a retrievalQA chain using Llama2
+    # Create a retrievalQA chain using the llm
     chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",  # Replace with the actual chain type
-        retriever=db.as_retriever(search_kwargs={'k': 1}),  # Assuming vectorstore is used as a retriever
+        retriever=vector_store.as_retriever(search_kwargs={'k': 1}),  # Assuming vectorstore is used as a retriever
         return_source_documents=True,
         chain_type_kwargs={'prompt': prompt}
     )
