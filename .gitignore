@@ -3,3 +3,5 @@
 train_files
 __pycache__
 .chainlit
+.files
+.audio_outputs

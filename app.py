@@ -12,6 +12,7 @@ from io import BytesIO
 from chainlit.element import ElementBased
 import pyttsx3
 import subprocess
+import os
  
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
@@ -84,17 +85,17 @@ async def factory():
     await msg.update()
     cl.user_session.set("chain", qa_chain)
 
-async def text_to_speech(text: str, mime_type: str):
+async def text_to_speech(text: str, mime_type: str, identifier: str):
     # Step 1: Initialize pyttsx3 engine and save to WAV file
     engine = pyttsx3.init()
     voices = engine.getProperty('voices')
     engine.setProperty('voice', 'com.apple.speech.synthesis.voice.samantha')
-    temp_wav_filename = "temp_audio.wav"
+    temp_wav_filename = f"audio_outputs/temp_audio{identifier}.wav"
     engine.save_to_file(text, temp_wav_filename)
     engine.runAndWait()  # Blocking call to complete saving the file
 
     # Step 2: Convert WAV to WEBM using ffmpeg
-    temp_webm_filename = "output_audio.webm"
+    temp_webm_filename = f"audio_outputs/output_audio{identifier}.webm"
     ffmpeg_command = [
         "ffmpeg", "-i", temp_wav_filename,
         "-c:a", "libvorbis", temp_webm_filename,
@@ -109,6 +110,10 @@ async def text_to_speech(text: str, mime_type: str):
 
     # Step 4: Reset buffer pointer and return the file name and binary data
     audio_buffer.seek(0)
+    
+    # cleanup
+    os.remove(temp_wav_filename)
+    os.remove(temp_webm_filename)
     return temp_webm_filename, audio_buffer.read()
 
 @cl.step(type="tool")
@@ -121,6 +126,7 @@ async def speech_to_text(audio_file):
 async def main(message):
     chain = cl.user_session.get("chain")
     audio_mime_type: str = cl.user_session.get("audio_mime_type")
+    user: str = cl.user_session.get("user")
     msg = cl.Message(content="")
         
     async for chunk in chain.astream(
@@ -129,10 +135,10 @@ async def main(message):
     ):
         print(chunk)
         await msg.stream_token(chunk['answer'])
-        output_name, output_audio = await text_to_speech(chunk['answer'], mime_type="audio/mpeg")
+        output_name, output_audio = await text_to_speech(chunk['answer'], mime_type="audio/mpeg", identifier=user.id)
 
     output_audio_el = cl.Audio(
-        name=output_name,
+        name="text to speech",
         auto_play=False,  
         mime=audio_mime_type,
         content=output_audio,
