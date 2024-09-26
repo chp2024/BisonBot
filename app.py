@@ -1,18 +1,15 @@
 # Import necessary libraries
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
 import chainlit as cl
-from langchain.llms import OpenAI  # Correct import
+from langchain.llms import OpenAI
 from langchain.schema.runnable.config import RunnableConfig
 from langchain_core.prompts import PromptTemplate
 from langchain_chroma import Chroma
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
+from openai import OpenAI as OpenAISound # Directly pull OpenAI -- is used for sound related tasks
 from io import BytesIO
 from chainlit.element import ElementBased
-import pyttsx3
-import subprocess
-import os
  
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
@@ -47,6 +44,11 @@ def load_model():
     """
     model = OpenAI(streaming=True, temperature=0)  # Corrected import and usage
     return model 
+
+@cl.cache
+def load_sound_model():
+    model = OpenAISound()
+    return model
 
 # Loading the local model into LLM
 llm = load_model()
@@ -85,48 +87,54 @@ async def factory():
     await msg.update()
     cl.user_session.set("chain", qa_chain)
 
-async def text_to_speech(text: str, mime_type: str, identifier: str):
-    # Step 1: Initialize pyttsx3 engine and save to WAV file
-    engine = pyttsx3.init()
-    voices = engine.getProperty('voices')
-    engine.setProperty('voice', 'com.apple.speech.synthesis.voice.samantha')
-    temp_wav_filename = f"audio_outputs/temp_audio{identifier}.wav"
-    engine.save_to_file(text, temp_wav_filename)
-    engine.runAndWait()  # Blocking call to complete saving the file
+@cl.on_audio_chunk
+async def on_audio_chunk(chunk: cl.AudioChunk):
+    if chunk.isStart:
+        buffer = BytesIO()
+        buffer.name = f"input_audio.{chunk.mimeType.split('/')[1]}"
+        # Initialize the session for a new audio stream
+        cl.user_session.set("audio_buffer", buffer)
+        cl.user_session.set("audio_mime_type", chunk.mimeType)
 
-    # Step 2: Convert WAV to WEBM using ffmpeg
-    temp_webm_filename = f"audio_outputs/output_audio{identifier}.webm"
-    ffmpeg_command = [
-        "ffmpeg", "-i", temp_wav_filename,
-        "-c:a", "libvorbis", temp_webm_filename,
-        "-y"  # Overwrite output file if it exists
-    ]
-    subprocess.run(ffmpeg_command, check=True)
+    # For now, write the chunks to a buffer and transcribe the whole audio at the end
+    cl.user_session.get("audio_buffer").write(chunk.data)
 
-    # Step 3: Read the WEBM file into a BytesIO object
-    audio_buffer = BytesIO()
-    with open(temp_webm_filename, "rb") as f:
-        audio_buffer.write(f.read())
+class messageClass:
+    def __init__(self,content) -> None:
+        self.content = content
 
-    # Step 4: Reset buffer pointer and return the file name and binary data
-    audio_buffer.seek(0)
+@cl.on_audio_end
+async def on_audio_end(elements: list[ElementBased]):
+    # Get the audio buffer from the session
+    audio_buffer: BytesIO = cl.user_session.get("audio_buffer")
+    print(cl.user_session.get("audio_mine_type"))
+    audio_buffer.seek(0)  # Move the file pointer to the beginning
+    audio_file = audio_buffer.read()
+    audio_mime_type: str = cl.user_session.get("audio_mime_type")
     
-    # cleanup
-    os.remove(temp_wav_filename)
-    os.remove(temp_webm_filename)
-    return temp_webm_filename, audio_buffer.read()
-
-@cl.step(type="tool")
-async def speech_to_text(audio_file):
-    # change speech to text
-    return 
+    client = load_sound_model()
+    transcription = client.audio.transcriptions.create(
+        model='whisper-1',
+        file=("audio.webm", audio_file, "audio/webm")
+    ).text
+    
+    input_audio_el = cl.Audio(
+        mime=audio_mime_type, content=audio_file, name=audio_buffer.name
+    )
+    await cl.Message(
+        author="You", 
+        type="user_message",
+        content=transcription,
+        elements=[input_audio_el, *elements]
+    ).send()
+    
+    await main(messageClass(transcription), audio_output=True)
 
 # Actions to be taken once user sends a query/message
 @cl.on_message
-async def main(message):
+async def main(message, audio_output=False):
     chain = cl.user_session.get("chain")
     audio_mime_type: str = cl.user_session.get("audio_mime_type")
-    user: str = cl.user_session.get("user")
     msg = cl.Message(content="")
         
     async for chunk in chain.astream(
@@ -135,15 +143,22 @@ async def main(message):
     ):
         print(chunk)
         await msg.stream_token(chunk['answer'])
-        output_name, output_audio = await text_to_speech(chunk['answer'], mime_type="audio/mpeg", identifier=user.id)
-
-    output_audio_el = cl.Audio(
-        name="text to speech",
-        auto_play=False,  
-        mime=audio_mime_type,
-        content=output_audio,
-    )
-    answer_output_audio = await cl.Message(content="").send()
-    answer_output_audio.elements = [output_audio_el]
-    await answer_output_audio.update()
+        if audio_output:
+            client = load_sound_model()
+            output_audio = client.audio.speech.create(
+                model='tts-1',
+                voice='nova',
+                input=chunk['answer']
+            ).read()
+    
+    if audio_output:    
+        output_audio_el = cl.Audio(
+            name="text to speech",
+            auto_play=True,  
+            mime=audio_mime_type,
+            content=output_audio,
+        )
+        answer_output_audio = await cl.Message(content="").send()
+        answer_output_audio.elements = [output_audio_el]
+        await answer_output_audio.update()
     await msg.send()
