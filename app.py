@@ -10,7 +10,10 @@ from langchain.memory import ConversationBufferMemory
 from openai import OpenAI as OpenAISound # Directly pull OpenAI -- is used for sound related tasks
 from io import BytesIO
 from chainlit.element import ElementBased
- 
+from langchain.retrievers.web_research import WebResearchRetriever
+from langchain_community.utilities import GoogleSearchAPIWrapper
+from langchain.retrievers import EnsembleRetriever
+
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
     return default_user   
@@ -52,17 +55,32 @@ def load_sound_model():
 
 # Loading the local model into LLM
 llm = load_model()
-    
-@cl.on_chat_start
-# Actions to be taken once the RAG app starts
-async def factory():   
-
-    vector_store = Chroma(
+scraped_vector_store = Chroma(
     collection_name='howard_information',
     embedding_function=embeddings,
     persist_directory='./data/chroma'
     )
-    
+search_vector_store = Chroma(
+    collection_name='howard_search_information',
+    embedding_function=embeddings,
+    persist_directory='./data/search_embeddings'
+    )
+
+@cl.cache
+def load_search_scraper():
+    search = GoogleSearchAPIWrapper()
+    web_research_retriever = WebResearchRetriever.from_llm(
+    vectorstore=search_vector_store, llm=llm, search=search,
+    allow_dangerous_requests=True
+    )
+    return web_research_retriever
+
+search_scraper = load_search_scraper()
+
+@cl.on_chat_start
+# Actions to be taken once the RAG app starts
+async def factory():
+
     prompt = PromptTemplate(template=prompt_template,
                        input_variables=['context', 'question', 'chat_history'])  # Include chat_history
     
@@ -72,9 +90,16 @@ async def factory():
         return_messages=True        # Ensure memory returns messages for context
     )
     
+    ensemble_retriever = EnsembleRetriever(
+    retrievers=[
+        search_vector_store.as_retriever(search_kwargs={"k": 1}),
+        scraped_vector_store.as_retriever(search_kwargs={"k": 1})],
+        weights=[0.5, 0.5]
+    )
+    
     qa_chain = ConversationalRetrievalChain.from_llm(
         llm,
-        vector_store.as_retriever(search_kwargs={"k": 2}),
+        ensemble_retriever,
         return_source_documents=True,
         memory=memory,               # Use memory for storing/referencing conversation
         verbose=False,
@@ -136,13 +161,22 @@ async def main(message, audio_output=False):
     chain = cl.user_session.get("chain")
     audio_mime_type: str = cl.user_session.get("audio_mime_type")
     msg = cl.Message(content="")
-        
+    try:
+        search_scraper.invoke(message.content)
+    except:
+        print("some error while doing the search scraping occured")
+
+    sources = []
     async for chunk in chain.astream(
         {"question": message.content},
         config=RunnableConfig(callbacks=[cl.LangchainCallbackHandler(stream_final_answer=True)]),
     ):
         print(chunk)
-        await msg.stream_token(chunk['answer'])
+        for document in chunk['source_documents']:
+            if document.metadata.get('source', None):
+                sources.append(document.metadata['source'])
+                
+        await msg.stream_token(chunk['answer'] + '\n Possible sources: \n' + '\n '.join(sources) )
         if audio_output:
             client = load_sound_model()
             output_audio = client.audio.speech.create(
