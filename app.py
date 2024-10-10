@@ -185,7 +185,7 @@ async def main(message, audio_output=False):
                 input=chunk['answer']
             ).read()
     
-    if audio_output:    
+    if audio_output:
         output_audio_el = cl.Audio(
             name="text to speech",
             auto_play=True,  
