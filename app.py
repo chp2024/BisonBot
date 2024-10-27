@@ -1,7 +1,7 @@
 # Import necessary libraries
 from langchain_community.embeddings import HuggingFaceEmbeddings
 import chainlit as cl
-from langchain.llms import OpenAI
+from langchain_openai import ChatOpenAI
 from langchain.schema.runnable.config import RunnableConfig
 from langchain_core.prompts import PromptTemplate
 from langchain_chroma import Chroma
@@ -10,14 +10,18 @@ from langchain.memory import ConversationBufferMemory
 from openai import OpenAI as OpenAISound # Directly pull OpenAI -- is used for sound related tasks
 from io import BytesIO
 from chainlit.element import ElementBased
- 
+from langchain.retrievers.web_research import WebResearchRetriever
+from langchain_community.utilities import GoogleSearchAPIWrapper
+from langchain.retrievers import EnsembleRetriever
+from langchain.retrievers.multi_query import MultiQueryRetriever
+
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
     return default_user   
 
 # Prompt Template
 prompt_template = """
-You are a helpful AI assistant and your name is BisonBot. You are provided multiple context items that are related to the prompt you have to answer. 
+You are BisonBot-- a helpful AI assistant who answers anything Howard Related. You are provided multiple context items that are related to the prompt you have to answer. 
 Here is the previous conversation history with the user:
 
 '''
@@ -31,6 +35,8 @@ Use this history as context to answer the user's question. Additionally, use the
 '''            
 
 Question: {question}
+
+Think Step by step and provide an answer:
 """
 
 embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
@@ -42,7 +48,7 @@ def load_model():
     """
     Loads the OpenAI language model.
     """
-    model = OpenAI(streaming=True, temperature=0)  # Corrected import and usage
+    model = ChatOpenAI(streaming=True, temperature=0.1, model='gpt-4')  # Corrected import and usage
     return model 
 
 @cl.cache
@@ -52,17 +58,32 @@ def load_sound_model():
 
 # Loading the local model into LLM
 llm = load_model()
-    
-@cl.on_chat_start
-# Actions to be taken once the RAG app starts
-async def factory():   
-
-    vector_store = Chroma(
+scraped_vector_store = Chroma(
     collection_name='howard_information',
     embedding_function=embeddings,
     persist_directory='./data/chroma'
     )
-    
+search_vector_store = Chroma(
+    collection_name='howard_search_information',
+    embedding_function=embeddings,
+    persist_directory='./data/search_embeddings'
+    )
+
+@cl.cache
+def load_search_scraper():
+    search = GoogleSearchAPIWrapper()
+    web_research_retriever = WebResearchRetriever.from_llm(
+    vectorstore=search_vector_store, llm=llm, search=search,
+    allow_dangerous_requests=True
+    )
+    return web_research_retriever
+
+search_scraper = load_search_scraper()
+
+@cl.on_chat_start
+# Actions to be taken once the RAG app starts
+async def factory():
+
     prompt = PromptTemplate(template=prompt_template,
                        input_variables=['context', 'question', 'chat_history'])  # Include chat_history
     
@@ -72,9 +93,29 @@ async def factory():
         return_messages=True        # Ensure memory returns messages for context
     )
     
+    ensemble_retriever = EnsembleRetriever(
+    retrievers=[
+        MultiQueryRetriever.from_llm(
+            retriever=search_vector_store.as_retriever(
+                search_type='mmr',
+                search_kwargs={'k': 3, 'fetch_k': 30, 'score_threshold': 0.9 }), llm=llm
+        ),
+        MultiQueryRetriever.from_llm(
+            retriever=scraped_vector_store.as_retriever(
+                search_type='mmr',
+                serach_kwargs={
+                    'k': 3,
+                    'fetch_k': 30,
+                    'score_threshold': 0.9
+                    }),
+                llm=llm
+        )
+        ]
+    )
+    
     qa_chain = ConversationalRetrievalChain.from_llm(
         llm,
-        vector_store.as_retriever(search_kwargs={"k": 2}),
+        ensemble_retriever,
         return_source_documents=True,
         memory=memory,               # Use memory for storing/referencing conversation
         verbose=False,
@@ -136,13 +177,22 @@ async def main(message, audio_output=False):
     chain = cl.user_session.get("chain")
     audio_mime_type: str = cl.user_session.get("audio_mime_type")
     msg = cl.Message(content="")
-        
+    try:
+        search_scraper.invoke(message.content)
+    except:
+        print("some error while doing the search scraping occured")
+
+    sources = set()
     async for chunk in chain.astream(
         {"question": message.content},
         config=RunnableConfig(callbacks=[cl.LangchainCallbackHandler(stream_final_answer=True)]),
     ):
         print(chunk)
-        await msg.stream_token(chunk['answer'])
+        for document in chunk['source_documents']:
+            if document.metadata.get('source', None):
+                sources.add(document.metadata['source'])
+                
+        await msg.stream_token(chunk['answer'] + '\n Possible sources: \n' + '\n '.join(sources) )
         if audio_output:
             client = load_sound_model()
             output_audio = client.audio.speech.create(
@@ -151,7 +201,7 @@ async def main(message, audio_output=False):
                 input=chunk['answer']
             ).read()
     
-    if audio_output:    
+    if audio_output:
         output_audio_el = cl.Audio(
             name="text to speech",
             auto_play=True,  
