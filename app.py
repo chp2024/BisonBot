@@ -182,17 +182,13 @@ async def main(message, audio_output=False):
     except:
         print("some error while doing the search scraping occured")
 
-    sources = set()
     async for chunk in chain.astream(
         {"question": message.content},
         config=RunnableConfig(callbacks=[cl.LangchainCallbackHandler(stream_final_answer=True)]),
     ):
         print(chunk)
-        for document in chunk['source_documents']:
-            if document.metadata.get('source', None):
-                sources.add(document.metadata['source'])
-                
-        await msg.stream_token(chunk['answer'] + '\n Possible sources: \n' + '\n '.join(sources) )
+        
+        await msg.stream_token(chunk['answer'])
         if audio_output:
             client = load_sound_model()
             output_audio = client.audio.speech.create(
