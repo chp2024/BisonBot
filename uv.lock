@@ -202,7 +202,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.149.0" },
     { name = "langchain-chroma", specifier = ">=0.1.4" },
     { name = "langchain-community", specifier = ">=0.3.3" },
-    { name = "langchain-openai" },
+    { name = "langchain-openai", specifier = ">=0.2.3" },
     { name = "openai", specifier = ">=1.52.0" },
     { name = "sentence-transformers", specifier = ">=3.2.0" },
 ]
