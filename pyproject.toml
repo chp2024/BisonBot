@@ -1,0 +1,15 @@
+[project]
+name = "bisonbot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chainlit>=1.2.0",
+    "google-api-python-client>=2.149.0",
+    "langchain-chroma>=0.1.4",
+    "langchain-community>=0.3.3",
+    "langchain-openai>=0.2.3",
+    "openai>=1.52.0",
+    "sentence-transformers>=3.2.0",
+]
