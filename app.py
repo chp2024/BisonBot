@@ -39,7 +39,7 @@ Question: {question}
 Think Step by step and provide an answer:
 """
 
-embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+embedding_model = "sentence-transformers/all-mpnet-base-v2"
 embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
 
 @cl.cache
@@ -73,8 +73,7 @@ search_vector_store = Chroma(
 def load_search_scraper():
     search = GoogleSearchAPIWrapper()
     web_research_retriever = WebResearchRetriever.from_llm(
-    vectorstore=search_vector_store, llm=llm, search=search,
-    allow_dangerous_requests=True
+    vectorstore=search_vector_store, llm=llm, search=search
     )
     return web_research_retriever
 
@@ -179,8 +178,9 @@ async def main(message, audio_output=False):
     msg = cl.Message(content="")
     try:
         search_scraper.invoke(message.content)
-    except:
-        print("some error while doing the search scraping occured")
+    except Exception as e:
+        print(e)
+        print("some error occured while doing the search scraping")
 
     async for chunk in chain.astream(
         {"question": message.content},
